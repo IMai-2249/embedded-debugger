@@ -91,6 +91,20 @@ const DAP_OWNED: &[&str] = &[
 ];
 
 pub fn ed_bridge_cmd(t: &mut Target, cmd: &str, args: &Value) -> Result<Value, String> {
+    // DWT 观察点 / HardFault 向量捕获依赖 Cortex-M 专属硬件，其余架构明确降级
+    let arch = t
+        .session
+        .as_ref()
+        .map(edlib::arch::Arch::of_session)
+        .unwrap_or(edlib::arch::Arch::Unknown);
+    if matches!(
+        cmd,
+        "set_watchpoint" | "clear_watchpoint" | "list_watchpoints" | "fault_info" | "inject_fault"
+    ) && !arch.has_dwt()
+    {
+        return Err("该功能依赖 Cortex-M 硬件单元（DWT/向量捕获），当前目标架构暂不支持".into());
+    }
+
     if DAP_OWNED.contains(&cmd) {
         return Err(match cmd {
             "reset" => "复位请用调试工具栏的重启（断点会自动重放）".into(),

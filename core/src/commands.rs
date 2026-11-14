@@ -710,12 +710,9 @@ pub fn disasm(state: Shared, addr: u64, count: u32) -> Result<Vec<DisasmLine>, S
         core.read_8(addr, &mut bytes)
             .map_err(|e| format!("读取代码失败: {e}"))?;
 
-        use capstone::arch::{arm, BuildsCapstone};
-        use capstone::Capstone;
-        let cs = Capstone::new()
-            .arm()
-            .mode(arm::ArchMode::Thumb)
-            .build()
+        let arch = crate::arch::Arch::from_core_type(core.core_type());
+        let cs = arch
+            .capstone_builder()
             .map_err(|e| format!("初始化反汇编器失败: {e}"))?;
         let insns = cs
             .disasm_all(&bytes, addr)

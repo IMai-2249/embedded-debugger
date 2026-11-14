@@ -8,6 +8,7 @@
 
 ## 功能
 
+- **与调试会话联动**：调试启动自动打开完整面板；面板里的寄存器/内存/反汇编/RTOS 任务/RTT 实时反映当前调试会话状态，停机/命中断点双向联动；未调试时可作为独立工具面板连接探针使用
 - **源码级调试**：断点、单步（步入/步过/步出）、指令单步、运行到光标处、复位停在 main
 - **反汇编**：Thumb 反汇编，与源码 PC 同步
 - **寄存器 / 内存**：通用寄存器 + FPU 浮点、任意地址内存查看
@@ -27,20 +28,20 @@
 ## 使用
 
 1. 调试探针接目标板 SWD（SWDIO/SWCLK/GND，可选 NRST）
-2. 在工程 `.vscode/launch.json` 中添加配置：
+2. 在工程 `.vscode/launch.json` 中添加配置（**chip 可留空**自动探测，当前支持 STM32 系列）：
 
 ```jsonc
 {
   "type": "embedded-debugger",
   "request": "launch",
   "name": "烧录并调试",
-  "chip": "STM32F767IGTx",
+  "chip": "STM32F767IGTx",   // 留空 "" 可自动探测
   "elf": "${workspaceFolder}/firmware.axf",
   "flash": true
 }
 ```
 
-3. F5 启动：烧录固件并停在入口；`request: "attach"` 则不烧录直接附着。
+3. F5 启动：烧录固件并停在入口，完整调试面板自动打开；`request: "attach"` 则不烧录直接附着。
 4. 侧边栏「调试控制」面板提供运行/暂停/单步/复位按钮，`embedded-debugger.open-ui` 命令可打开完整调试界面（寄存器/内存/变量树/RTOS 任务）。
 
 支持的调试探针：**CMSIS-DAP**（DAPLink 及兼容克隆）、**ST-Link**（V2/V3）、**J-Link**、**WCH-Link**、**CH347**、FTDI、Black Magic Probe 等 probe-rs 所支持的探针。
@@ -73,6 +74,12 @@ npx @vscode/vsce package                 # 打包 vsix（可选）
 ```
 
 > `vscode/webview-ui/` 为前端构建产物，直接随扩展分发；其源码见桌面版仓库。
+
+## 多架构路线
+
+- **Cortex-M**：全功能已真机验证（CherryUSB CMSIS-DAP + STM32F767，32 项自检）
+- **RISC-V**：反汇编引擎已就绪（capstone RV32，含压缩指令），寄存器面板按目标描述自适应；调试/断点/观察点链路待真机接入
+- 架构相关行为统一在 `core/src/arch.rs` 分派，业务代码不做架构假设
 
 ## 相关项目
 

@@ -4,6 +4,7 @@
 //! ELF/DWARF 符号解析、源码级单步、CMSIS-Pack 导入。
 //! 不依赖任何 GUI 框架，供 DAP 调试适配器（ed-dap）复用。
 
+pub mod arch;
 pub mod import;
 pub mod commands;
 

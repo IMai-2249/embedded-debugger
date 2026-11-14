@@ -908,18 +908,20 @@ pub fn disassemble(
 ) -> Result<Vec<Value>, String> {
     let hex = memory_ref.trim().trim_start_matches("0x").trim_start_matches("0X");
     let base = u64::from_str_radix(hex, 16).map_err(|e| format!("地址解析失败: {e}"))?;
-    let start = ((base as i64) + offset + instr_offset * 2).max(0) as u64 & !1;
+    let arch = {
+        let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
+        embedded_debugger_lib::arch::Arch::from_core_type(core.core_type())
+    };
+    let start = (((base as i64) + offset) as u64)
+        .wrapping_add((instr_offset as i64).unsigned_abs() * arch.instr_step())
+        & arch.pc_align();
     let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let mut bytes = vec![0u8; count * 4 + 4];
     if core.read_8(start, &mut bytes).is_err() {
         bytes.fill(0);
     }
-    use capstone::arch::{arm, BuildsCapstone};
-    use capstone::Capstone;
-    let cs = Capstone::new()
-        .arm()
-        .mode(arm::ArchMode::Thumb)
-        .build()
+    let cs = arch
+        .capstone_builder()
         .map_err(|e| format!("反汇编器初始化失败: {e}"))?;
     let insns = cs
         .disasm_all(&bytes[..count * 4], start)
