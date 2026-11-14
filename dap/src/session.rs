@@ -12,10 +12,16 @@ use std::io::Write;
 
 /// 一个调试目标
 pub struct Target {
-    pub session: Session,
+    /// None 仅出现在 ed/bridge 请求把 Session 临时移入 AppState 的窗口期
+    pub session: Option<Session>,
+    /// launch 配置的芯片名（webview 桥接构建 AppState 用）
+    pub chip: String,
     pub debug: Option<DebugInfo>,
     /// (file, line, addr)
     pub bps: Vec<(String, u32, u64)>,
+    /// webview 桥接请求间持久的状态（RTT 会话、数据观察点）
+    pub rtt: Option<probe_rs::rtt::Rtt>,
+    pub watchpoints: Vec<embedded_debugger_lib::state::WpInfo>,
 }
 
 pub struct LaunchArgs {
@@ -189,7 +195,7 @@ pub fn list_chips(query: &str) -> Vec<Value> {
 pub fn erase_chip(cfg: &LaunchArgs) -> Result<(), String> {
     let mut t = attach(cfg)?;
     let mut progress = probe_rs::flashing::FlashProgress::empty();
-    probe_rs::flashing::erase_all(&mut t.session, &mut progress, false)
+    probe_rs::flashing::erase_all(t.session.as_mut().ok_or("未连接目标")?, &mut progress, false)
         .map_err(|e| format!("擦除失败: {e}"))
 }
 
@@ -342,7 +348,14 @@ pub fn attach(cfg: &LaunchArgs) -> Result<Target, String> {
     } else {
         Some(load_elf(&cfg.elf).map_err(|e| format!("符号解析失败: {e}"))?)
     };
-    Ok(Target { session, debug, bps: Vec::new() })
+    Ok(Target {
+        session: Some(session),
+        chip: cfg.chip.clone(),
+        debug,
+        bps: Vec::new(),
+        rtt: None,
+        watchpoints: Vec::new(),
+    })
 }
 
 pub fn read_regs16(core: &mut probe_rs::Core<'_>) -> Result<[u32; 16], String> {
@@ -358,7 +371,7 @@ pub fn read_regs16(core: &mut probe_rs::Core<'_>) -> Result<[u32; 16], String> {
 
 /// 当前停止点的调用栈（DAP stackTrace）
 pub fn stack_frames(t: &mut Target) -> Result<Vec<DapFrame>, String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     if !core
         .status()
         .map_err(|e| e.to_string())?
@@ -498,7 +511,7 @@ fn loc_addr(loc: &LocalLoc, pc: u64, frame_base: i64, cfa: u64, regs: Option<&[u
 
 pub fn locals(t: &mut Target, frame: &DapFrame) -> Result<Vec<VarOut>, String> {
     let debug = t.debug.as_ref().ok_or("未加载符号")?;
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let regs = read_regs16(&mut core)?;
     let top = frame.id == 1;
     let regs_ref = if top { Some(&regs) } else { None };
@@ -615,7 +628,7 @@ pub fn children(t: &mut Target, addr: u64, type_id: usize) -> Result<Vec<VarOut>
     }
 
     let types = t.debug.as_ref().map(|d| d.types.clone()).unwrap_or_default();
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for child in list {
         let size = (child.size as usize).clamp(1, 256);
@@ -644,7 +657,7 @@ pub fn globals(t: &mut Target) -> Result<Vec<VarOut>, String> {
     let var_size = |v: &variables::VarEntry| debug.types[v.type_id].size.clamp(1, 256) as u64;
     let var_name = |v: &variables::VarEntry| debug.types[v.type_id].name.clone();
 
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     const MAX_BLOCK: u64 = 2048;
     const MAX_GAP: u64 = 512;
     let mut out = Vec::new();
@@ -697,7 +710,7 @@ pub fn globals(t: &mut Target) -> Result<Vec<VarOut>, String> {
 
 /// 寄存器（名称 + 十六进制）
 pub fn registers(t: &mut Target) -> Result<Vec<(String, String, String)>, String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for reg in core.registers().all_registers() {
         if reg.size_in_bits() > 32 {
@@ -713,7 +726,7 @@ pub fn registers(t: &mut Target) -> Result<Vec<(String, String, String)>, String
 /// 断点重设（VS Code 按文件逐个发请求）: 只替换该文件的断点，其他文件保留；
 /// 全部槽位清空后按记录确定式重编程（不依赖硬件回读）
 pub fn set_breakpoints(t: &mut Target, file: &str, lines: &[u32]) -> Result<Vec<Value>, String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let avail = core.available_breakpoint_units().map_err(|e| e.to_string())? as usize;
 
     // 1) 记录层: 移除该文件旧断点, 追加新解析结果
@@ -760,7 +773,7 @@ pub fn set_breakpoints(t: &mut Target, file: &str, lines: &[u32]) -> Result<Vec<
 
 /// 复位会清掉 FPB 断点: 按我们自己的记录重新编程全部槽位
 pub fn reapply_breakpoints(t: &mut Target) -> Result<(), String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let avail = core.available_breakpoint_units().map_err(|e| e.to_string())? as usize;
     for u in 0..avail {
         let _ = probe_rs::CoreInterface::clear_hw_breakpoint(&mut core, u);
@@ -783,13 +796,13 @@ pub fn bp_addrs(t: &Target) -> Vec<u64> {
 
 /// 当前是否停在断点上。只读 DHCSR，不读寄存器，轮询代价很小
 pub fn halted(t: &mut Target) -> Result<bool, String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let status = core.status().map_err(|e| e.to_string())?;
     Ok(matches!(status, CoreStatus::Halted(_)))
 }
 
 pub fn pc_of(t: &mut Target) -> Result<u64, String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let reg = core.program_counter().id();
     Ok(core
         .read_core_reg::<u32>(reg)
@@ -797,19 +810,19 @@ pub fn pc_of(t: &mut Target) -> Result<u64, String> {
 }
 
 pub fn halt_target(t: &mut Target) -> Result<u64, String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let h = core.halt(std::time::Duration::from_secs(2)).map_err(|e| e.to_string())?;
     Ok(h.pc as u64)
 }
 
 pub fn run_target(t: &mut Target) -> Result<(), String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     core.run().map_err(|e| e.to_string())
 }
 
 /// 继续运行: PC 正停在断点地址上时先单步跨过（否则 FPB 立即再次命中, 表现为"卡死"）
 pub fn resume(t: &mut Target) -> Result<(), String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let reg = core.program_counter().id();
     let pc = (core.read_core_reg::<u32>(reg).map_err(|e| e.to_string())? as u64) & !1;
     if t.bps.iter().any(|(_, _, a)| *a == pc) {
@@ -827,7 +840,7 @@ pub fn reset_and_run(t: &mut Target) -> Result<(), String> {
 
 /// 运行到指定地址（临时硬件断点用空闲槽位，Keil "Run to main" 同款）
 pub fn run_to_addr(t: &mut Target, addr: u64, timeout_secs: f64) -> Result<(), String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let avail = core.available_breakpoint_units().map_err(|e| e.to_string())? as usize;
     let unit = t.bps.len();
     if unit >= avail {
@@ -888,7 +901,7 @@ pub fn disassemble(
     let hex = memory_ref.trim().trim_start_matches("0x").trim_start_matches("0X");
     let base = u64::from_str_radix(hex, 16).map_err(|e| format!("地址解析失败: {e}"))?;
     let start = ((base as i64) + offset + instr_offset * 2).max(0) as u64 & !1;
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let mut bytes = vec![0u8; count * 4 + 4];
     if core.read_8(start, &mut bytes).is_err() {
         bytes.fill(0);
@@ -976,7 +989,7 @@ fn disasm_range(t: &mut Target, start: u64, end: u64, max: usize) -> Result<Vec<
     }
     let mut bytes = vec![0u8; len];
     {
-        let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+        let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
         if core.read_8(start, &mut bytes).is_err() {
             return Ok(Vec::new());
         }
@@ -1005,7 +1018,7 @@ fn disasm_range(t: &mut Target, start: u64, end: u64, max: usize) -> Result<Vec<
 
 /// 单条指令（DAP instruction 粒度）
 pub fn instruction_step(t: &mut Target) -> Result<u64, String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     if !core.status().map_err(|e| e.to_string())?.is_halted() {
         core.halt(std::time::Duration::from_secs(2)).map_err(|e| e.to_string())?;
     }
@@ -1014,7 +1027,7 @@ pub fn instruction_step(t: &mut Target) -> Result<u64, String> {
 }
 
 pub fn reset_and_halt(t: &mut Target) -> Result<(), String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     core.reset_and_halt(std::time::Duration::from_secs(2))
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -1026,7 +1039,7 @@ pub fn step(t: &mut Target, mode: &str) -> Result<Option<String>, String> {
     // SWD 偶发传输错误（An ARM specific error）重试一次：
     // 先放弃旧 core 句柄重新拿（等价于重新同步调试口），再走一遍单步
     let attempt = |t: &mut Target| -> Result<stepper::StepResult, String> {
-        let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+        let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
         stepper::step_line(&mut core, t.debug.as_ref(), mode, &bps)
     };
     match attempt(t) {
@@ -1229,7 +1242,7 @@ pub fn evaluate(
                     .cloned()
                     .ok_or_else(|| format!("未找到变量: {root}"))?;
                 let v = fl.vars.iter().find(|v| v.name == root).ok_or_else(|| format!("未找到变量: {root}"))?.clone();
-                let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+                let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
                 let regs = read_regs16(&mut core)?;
                 let loc = resolve_loc(&v.loc, pc).ok_or("变量已被优化")?;
                 let frame_base = match &fl.frame_base {
@@ -1277,7 +1290,7 @@ pub fn evaluate(
 }
 
 fn core_read(t: &mut Target, addr: u64, buf: &mut [u8]) -> Result<(), String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     core.read_8(addr, buf).map_err(|e| e.to_string())
 }
 
@@ -1289,7 +1302,7 @@ pub fn read_memory(t: &mut Target, addr: u64, len: usize) -> Result<String, Stri
         return Ok(buf.iter().map(|b| format!("{b:02x}")).collect());
     }
 
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     let mut out = String::with_capacity(len * 2);
     for i in 0..len {
         match core.read_word_8(addr + i as u64) {
@@ -1330,7 +1343,7 @@ pub fn write_memory(t: &mut Target, addr: u64, data: &str) -> Result<(), String>
         bytes.push(byte);
     }
     let size = bytes.len();
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     core.write_8(addr, &bytes).map_err(|e| e.to_string())?;
 
     // 回读校验：Flash 只读区写不进去，别假装成功
@@ -1382,7 +1395,7 @@ pub fn write_value(t: &mut Target, addr: u64, type_id: usize, value: &str) -> Re
     };
     bytes.resize(size, 0);
 
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     core.write_8(addr, &bytes).map_err(|e| e.to_string())?;
 
     // 回读校验：Flash 里的 const 变量写不进去，别假装成功
@@ -1396,7 +1409,7 @@ pub fn write_value(t: &mut Target, addr: u64, type_id: usize, value: &str) -> Re
 
 /// 写一个 32 位内核寄存器（名字不区分大小写，支持 R0..R15/SP/LR/PC/MSP/PSP/XPSR 等）
 pub fn write_register(t: &mut Target, name: &str, value: u32) -> Result<(), String> {
-    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
     for reg in core.registers().all_registers() {
         if reg.name().eq_ignore_ascii_case(name) {
             return core
@@ -1739,7 +1752,7 @@ pub fn fault_info(t: &mut Target) -> Result<Value, String> {
     // 异常压栈现场：EXC_RETURN 的 bit2 决定用 MSP 还是 PSP
     let mut frame = Value::Null;
     {
-        let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+        let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
         let lr = read_reg_named(&mut core, "R14")
             .or_else(|| read_reg_named(&mut core, "LR"))
             .unwrap_or(0);

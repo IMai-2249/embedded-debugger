@@ -673,6 +673,7 @@ dependencies = [
  "capstone",
  "embedded-debugger",
  "probe-rs",
+ "serde",
  "serde_json",
 ]
 

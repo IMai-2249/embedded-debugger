@@ -3,6 +3,7 @@
 //! DAP over stdio：VS Code 扩展拉起本进程，通过 Content-Length 帧协议通信。
 //! 调试核心复用主工程的 Rust 模块（stepper/cfi/debuginfo/variables）。
 
+mod bridgecmd;
 mod protocol;
 mod session;
 mod svd;
@@ -192,7 +193,8 @@ fn main() {
                 let halted = s
                     .target
                     .as_mut()
-                    .and_then(|t| t.session.core(0).ok())
+                    .and_then(|t| t.session.as_mut())
+                    .and_then(|sess| sess.core(0).ok())
                     .and_then(|mut c| c.status().ok())
                     .map(|st| st.is_halted())
                     .unwrap_or(false);
@@ -256,7 +258,11 @@ fn main() {
                 match LaunchArgs::from_value(&args).and_then(|cfg| session::attach(&cfg)) {
                     Ok(t) => {
                         let mut s = state.lock().unwrap();
-                        s.chip = t.session.target().name.clone();
+                        s.chip = t
+                            .session
+                            .as_ref()
+                            .map(|sess| sess.target().name.clone())
+                            .unwrap_or_default();
                         s.stop_at_entry = flash;
                         s.was_flashed = flash;
                         s.target = Some(t);
@@ -289,6 +295,25 @@ fn main() {
                     Ok(bps) => reply(&sender, &seq, req_seq, &cmd, true, Some(json!({ "breakpoints": bps })), None),
                     Err(e) => reply(&sender, &seq, req_seq, &cmd, false, None, Some(e)),
                 }
+            }
+            // webview 面板桥接：观察/控制命令复用 core 命令层（见 bridgecmd.rs），
+            // 停机后监视线程发 stopped 事件，VSCode 与 webview 双侧联动
+            "ed/bridge" => {
+                let id = args.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
+                let bcmd = args.get("cmd").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let bargs = args.get("args").cloned().unwrap_or(json!({}));
+                let started = std::time::Instant::now();
+                let resp = match with_target(&state, |t| bridgecmd::ed_bridge_cmd(t, &bcmd, &bargs)) {
+                    Ok(data) => json!({ "id": id, "ok": true, "data": data }),
+                    Err(e) => json!({ "id": id, "ok": false, "error": e }),
+                };
+                eprintln!(
+                    "[ed-dap] ed/bridge {} ok={} ({}ms)",
+                    bcmd,
+                    resp.get("ok").and_then(|x| x.as_bool()).unwrap_or(false),
+                    started.elapsed().as_millis()
+                );
+                reply(&sender, &seq, req_seq, &cmd, true, Some(resp), None);
             }
             "ed/sourceDisassembly" => {
                 let file = args
@@ -386,7 +411,7 @@ fn main() {
                     break;
                 };
                 let r = with_target(&state, |t| {
-                    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+                    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
                     svd::read_peripheral(&mut core, &p)
                 });
                 match r {
@@ -415,7 +440,7 @@ fn main() {
                 let addr = p.base_address + reg.offset;
                 let r = with_target(&state, |t| {
                     use probe_rs::MemoryInterface;
-                    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+                    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
                     if reg.size == 8 {
                         core.write_8(addr, &[value as u8]).map_err(|e| e.to_string())
                     } else {
@@ -882,7 +907,7 @@ fn main() {
                     st.next_ref = 100_000;
                 }
                 let r = with_target(&state, |t| {
-                    let mut core = t.session.core(0).map_err(|e| e.to_string())?;
+                    let mut core = t.session.as_mut().ok_or("未连接目标")?.core(0).map_err(|e| e.to_string())?;
                     if !core.status().map_err(|e| e.to_string())?.is_halted() {
                         core.halt(std::time::Duration::from_secs(2)).map_err(|e| e.to_string())?;
                     }

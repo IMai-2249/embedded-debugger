@@ -22,6 +22,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('embedded-debugger.reset', () => dreq('reset')),
     vscode.commands.registerCommand('embedded-debugger.open-ui', () => openUi(context)),
     vscode.window.registerTreeDataProvider('embeddedDebugControls', new ControlsProvider()),
+    // 调试启动时自动带出完整面板（已开则聚焦），省一次手动命令
+    vscode.debug.onDidStartDebugSession((s) => {
+      if (s.type === 'embedded-debugger') openUi(context);
+    }),
   );
 }
 
@@ -257,6 +261,44 @@ export function openUi(ctx: vscode.ExtensionContext) {
         });
       return;
     }
+    // 有嵌入式调试会话 → 经 DAP custom request 共享探针与状态（根治双头割裂）
+    const dbg = vscode.debug.activeDebugSession;
+    if (dbg && dbg.type === 'embedded-debugger') {
+      const post = (msg: Record<string, unknown>) => {
+        void uiPanel?.webview.postMessage({ __bridge: true, id, ...msg });
+      };
+      // 控制类映射 DAP 标准请求：VSCode 状态机/停机监视完整联动，复位自动重放断点
+      const ctrl: Record<string, { command: string; args?: unknown }> = {
+        reset: { command: 'restart' },
+        resume: { command: 'continue', args: { threadId: 1 } },
+        continue: { command: 'continue', args: { threadId: 1 } },
+        halt: { command: 'pause', args: { threadId: 1 } },
+        pause: { command: 'pause', args: { threadId: 1 } },
+        step: { command: 'instructionStep' },
+      };
+      const mapped = ctrl[cmd];
+      if (mapped) {
+        void dbg
+          .customRequest(mapped.command, mapped.args)
+          .then(
+            (r: unknown) => post({ ok: true, data: r ?? null }),
+            (e: unknown) => post({ ok: false, error: String(e) }),
+          );
+        return;
+      }
+      // 观察/工具命令 → ed-dap 内复用 core 命令层
+      void dbg
+        .customRequest('ed/bridge', { id, cmd, args })
+        .then(
+          (r: unknown) => {
+            const b = (r && typeof r === 'object' ? r : {}) as Record<string, unknown>;
+            post({ ok: !!b.ok, data: b.data, error: b.error });
+          },
+          (e: unknown) => post({ ok: false, error: String(e) }),
+        );
+      return;
+    }
+    // 无调试会话 → ed-bridge 独立模式（可独立连接探针，作为纯工具使用）
     startBridge(ctx).stdin.write(JSON.stringify({ id, cmd, args }) + '\n');
   });
 }
