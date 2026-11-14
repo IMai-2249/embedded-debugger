@@ -1,0 +1,9 @@
+# 项目级 crates 镜像：rsproxy（不污染全局 cargo 配置）
+[source.crates-io]
+replace-with = 'rsproxy-sparse'
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+
+[net]
+retry = 3

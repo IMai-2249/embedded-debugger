@@ -1,0 +1,11 @@
+[package]
+name = "ed-dap"
+version = "0.2.0"
+edition = "2021"
+description = "嵌入式调试器 VS Code 调试适配器（DAP over stdio）"
+
+[dependencies]
+serde_json = "1"
+probe-rs = "0.32"
+capstone = "0.14"
+embedded-debugger = { path = "../core" }

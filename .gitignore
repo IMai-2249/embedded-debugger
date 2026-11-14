@@ -1,0 +1,13 @@
+# Rust
+target/
+
+# VS Code 扩展
+node_modules/
+out/
+*.vsix
+
+# 调试适配器可执行文件（cargo build 后复制到 vscode/bin/，见 README）
+vscode/bin/
+
+# 日志
+*.log

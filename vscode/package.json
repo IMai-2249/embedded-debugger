@@ -1,0 +1,197 @@
+{
+  "name": "embedded-debugger-vscode",
+  "displayName": "嵌入式调试器 (Cortex-M)",
+  "description": "基于 probe-rs 的 Cortex-M 调试：源码级断点/单步/调用栈/变量/RTOS 任务感知，支持导入厂商 CMSIS-Pack",
+  "version": "0.2.0",
+  "publisher": "embedded-debugger",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onDebug",
+    "onDebugResolve:embedded-debugger"
+  ],
+  "contributes": {
+    "breakpoints": [
+      {
+        "language": "c"
+      },
+      {
+        "language": "cpp"
+      }
+    ],
+    "commands": [
+      {
+        "command": "embedded-debugger.run",
+        "title": "运行/继续",
+        "category": "嵌入式调试器",
+        "enablement": "inDebugMode"
+      },
+      {
+        "command": "embedded-debugger.pause",
+        "title": "暂停",
+        "category": "嵌入式调试器",
+        "enablement": "inDebugMode"
+      },
+      {
+        "command": "embedded-debugger.step-in",
+        "title": "步入（进函数）",
+        "category": "嵌入式调试器",
+        "enablement": "inDebugMode"
+      },
+      {
+        "command": "embedded-debugger.step-over",
+        "title": "步过（下一行）",
+        "category": "嵌入式调试器",
+        "enablement": "inDebugMode"
+      },
+      {
+        "command": "embedded-debugger.step-out",
+        "title": "步出（跳出函数）",
+        "category": "嵌入式调试器",
+        "enablement": "inDebugMode"
+      },
+      {
+        "command": "embedded-debugger.instruction-step",
+        "title": "单条指令",
+        "category": "嵌入式调试器",
+        "enablement": "inDebugMode"
+      },
+      {
+        "command": "embedded-debugger.reset",
+        "title": "复位并停在 main",
+        "category": "嵌入式调试器",
+        "enablement": "inDebugMode"
+      },
+      {
+        "command": "embedded-debugger.open-ui",
+        "title": "打开嵌入式调试器界面",
+        "category": "嵌入式调试器"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "embedded-debugger.pause",
+        "key": "f6",
+        "when": "inDebugMode"
+      },
+      {
+        "command": "embedded-debugger.reset",
+        "key": "f7",
+        "when": "inDebugMode"
+      }
+    ],
+    "views": {
+      "debug": [
+        {
+          "id": "embeddedDebugControls",
+          "name": "调试控制"
+        }
+      ]
+    },
+    "debuggers": [
+      {
+        "type": "embedded-debugger",
+        "label": "嵌入式调试器 (Cortex-M)",
+        "languages": [
+          "c",
+          "cpp"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "chip"
+            ],
+            "properties": {
+              "chip": {
+                "type": "string",
+                "description": "芯片型号（如 STM32F767IGTx；需在内置库中或已导入厂商包）"
+              },
+              "elf": {
+                "type": "string",
+                "description": "固件文件路径（ELF/AXF，用于烧录与源码级调试符号）"
+              },
+              "flash": {
+                "type": "boolean",
+                "default": true,
+                "description": "启动前烧录固件"
+              },
+              "probeIndex": {
+                "type": "number",
+                "default": 0,
+                "description": "调试探针序号（接多个探针时）"
+              },
+              "adapterPath": {
+                "type": "string",
+                "description": "调试适配器 ed-dap 可执行文件路径（默认用扩展内置）"
+              }
+            }
+          },
+          "attach": {
+            "required": [
+              "chip"
+            ],
+            "properties": {
+              "chip": {
+                "type": "string",
+                "description": "芯片型号"
+              },
+              "elf": {
+                "type": "string",
+                "description": "符号文件路径（ELF/AXF）"
+              },
+              "probeIndex": {
+                "type": "number",
+                "default": 0
+              },
+              "adapterPath": {
+                "type": "string",
+                "description": "调试适配器路径（默认用扩展内置）"
+              }
+            }
+          }
+        },
+        "configurationSnippets": [
+          {
+            "label": "嵌入式调试器: 烧录启动",
+            "description": "烧录固件并开始源码级调试",
+            "body": {
+              "type": "embedded-debugger",
+              "request": "launch",
+              "name": "烧录并调试",
+              "chip": "STM32F767IGTx",
+              "elf": "^\"\\${workspaceFolder}/firmware.axf\"",
+              "flash": true
+            }
+          },
+          {
+            "label": "嵌入式调试器: 附加到运行中的芯片",
+            "description": "不烧录，直接附着到正在运行的固件",
+            "body": {
+              "type": "embedded-debugger",
+              "request": "attach",
+              "name": "附加调试",
+              "chip": "STM32F767IGTx",
+              "elf": "^\"\\${workspaceFolder}/firmware.axf\""
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "build:webview": "vite build --base ./ --outDir ../vscode/webview-ui"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.5.0"
+  }
+}
