@@ -73,7 +73,6 @@ fn arg_str_vec(args: &Value, key: &str) -> Vec<String> {
 
 /// DAP 职责命令：由 VSCode 原生流程承接，webview 内不重复提供
 const DAP_OWNED: &[&str] = &[
-    "connect",
     "disconnect",
     "flash",
     "load_symbols",
@@ -108,7 +107,7 @@ pub fn ed_bridge_cmd(t: &mut Target, cmd: &str, args: &Value) -> Result<Value, S
     if DAP_OWNED.contains(&cmd) {
         return Err(match cmd {
             "reset" => "复位请用调试工具栏的重启（断点会自动重放）".into(),
-            "connect" => "已在调试会话中，无需重复连接".into(),
+            "disconnect" => "断开请点 VSCode 调试工具栏的停止按钮".into(),
             "set_breakpoint" | "clear_breakpoint" => "请在编辑器行号旁点击设置断点（与调试会话联动）".into(),
             "flash" | "load_symbols" => "烧录与符号加载由 launch.json 配置完成".into(),
             _ => "该操作由 VSCode 调试流程承接".into(),
@@ -126,6 +125,35 @@ pub fn ed_bridge_cmd(t: &mut Target, cmd: &str, args: &Value) -> Result<Value, S
     }));
 
     let result: Result<Value, String> = match cmd {
+        // ---- 连接同步：探针由 DAP 会话持有，这里只把目标信息同步给前端状态机 ----
+        "connect" => {
+            let st = shared.lock().unwrap();
+            let sess = st.session.as_ref().ok_or("调试会话未就绪")?;
+            let tgt = sess.target();
+            let cores: Vec<Value> = tgt
+                .cores
+                .iter()
+                .enumerate()
+                .map(|(i, c)| json!({ "index": i, "kind": format!("{:?}", c.core_type) }))
+                .collect();
+            let regions: Vec<Value> = tgt
+                .memory_map
+                .iter()
+                .map(|r| match r {
+                    probe_rs::config::MemoryRegion::Nvm(n) => {
+                        json!({ "kind": "flash", "start": n.range.start, "size": n.range.end - n.range.start })
+                    }
+                    probe_rs::config::MemoryRegion::Ram(m) => {
+                        json!({ "kind": "ram", "start": m.range.start, "size": m.range.end - m.range.start })
+                    }
+                    probe_rs::config::MemoryRegion::Generic(g) => {
+                        json!({ "kind": "generic", "start": g.range.start, "size": g.range.end - g.range.start })
+                    }
+                })
+                .collect();
+            drop(st);
+            Ok(json!({ "target": t.chip, "cores": cores, "regions": regions }))
+        }
         // ---- 控制 ----
         "halt" => commands::halt(&shared).map(|v| j(v)),
         "resume" => commands::resume(&shared).map(|_| Value::Null),

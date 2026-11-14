@@ -2,7 +2,7 @@
   "name": "embedded-debugger-vscode",
   "displayName": "嵌入式调试器 (Cortex-M)",
   "description": "基于 probe-rs 的 Cortex-M 调试：源码级断点/单步/调用栈/变量/RTOS 任务感知，支持导入厂商 CMSIS-Pack",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "embedded-debugger",
   "license": "MIT",
   "engines": {

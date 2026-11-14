@@ -1,4 +1,4 @@
-# 一键构建嵌入式调试器 VS Code 插件
+﻿# 一键构建嵌入式调试器 VS Code 插件
 # 用法:
 #   .\build.ps1            编译 Rust 适配器并更新 vscode/bin（重载 VSCode 窗口生效）
 #   .\build.ps1 -Vsix      额外打包 vsix（vscode/embedded-debugger-vscode-*.vsix）
