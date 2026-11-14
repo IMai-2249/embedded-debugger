@@ -56,20 +56,20 @@ vscode/      VS Code 扩展（TypeScript + webview UI）
 
 ## 从源码构建
 
-依赖：Node 20+ / Rust (MSVC toolchain)
+Windows 一键构建：
+
+```powershell
+.\build.ps1            # 编译并更新 vscode/bin（开发模式重载窗口生效）
+.\build.ps1 -Install   # 打包 vsix 并直接安装
+```
+
+依赖：Node 20+ / Rust (MSVC toolchain)。`build.ps1` 已覆盖上述全流程；Linux/macOS 手动执行：
 
 ```bash
-# 1. 编译调试适配器，产物复制到扩展 bin 目录
 cargo build --release
-cp target/release/ed-dap.exe target/release/ed-bridge.exe vscode/bin/
-
-# 2. 编译扩展
-cd vscode
-npm ci
-npm run compile        # 产出 out/extension.js
-
-# 3. 打包 vsix（可选）
-npx @vscode/vsce package
+cp target/release/ed-dap target/release/ed-bridge vscode/bin/
+cd vscode && npm ci && npm run compile   # 扩展 TS 编译
+npx @vscode/vsce package                 # 打包 vsix（可选）
 ```
 
 > `vscode/webview-ui/` 为前端构建产物，直接随扩展分发；其源码见桌面版仓库。

@@ -1702,11 +1702,11 @@ pub fn rtt_stop(state: Shared) -> Result<(), String> {
 
 #[derive(Serialize, Clone)]
 pub struct DetectResult {
-    chip: String,
+    pub chip: String,
     /// 同系列同容量的全部候选（封装不同，无法从芯片读出）
-    candidates: Vec<String>,
-    dev_id: String,
-    flash_kb: Option<u32>,
+    pub candidates: Vec<String>,
+    pub dev_id: String,
+    pub flash_kb: Option<u32>,
 }
 
 pub fn detect_chip(probe: usize) -> Result<DetectResult, String> {

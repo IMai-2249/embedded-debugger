@@ -127,11 +127,13 @@ class ConfigProvider implements vscode.DebugConfigurationProvider {
   ): vscode.ProviderResult<vscode.DebugConfiguration> {
     if (!config.type && !config.request) {
       throw new Error(
-        '请先创建 launch.json（选择"嵌入式调试器"），填入芯片型号与固件路径。',
+        '请先创建 launch.json（选择"嵌入式调试器"），填入芯片型号（或留空自动探测）与固件路径。',
       );
     }
     if (!config.chip) {
-      throw new Error('launch 配置缺少 chip（芯片型号，如 STM32F767IGTx）');
+      void vscode.window.showInformationMessage(
+        '未填写 chip：将尝试自动探测芯片（当前支持 STM32 系列；失败时请回填具体型号）',
+      );
     }
     if (config.request === 'launch' && !config.flash && !config.elf) {
       vscode.window.showWarningMessage('未配置 elf：本次调试没有源码级符号（仅反汇编/内存）');

@@ -325,10 +325,18 @@ pub fn attach(cfg: &LaunchArgs) -> Result<Target, String> {
         None => cfg.probe_index.min(probes.len() - 1),
     };
     let info = &probes[idx];
-    let sel: TargetSelector = cfg.chip.trim().to_string().into();
+    // chip 留空 → 自动探测（复用桌面版 STM32 识别：通用 attach 后读 DBGMCU_IDCODE）
+    let chip = if cfg.chip.trim().is_empty() {
+        embedded_debugger_lib::commands::detect_chip(idx)
+            .map_err(|e| format!("chip 未填写且自动识别失败: {e}"))?
+            .chip
+    } else {
+        cfg.chip.trim().to_string()
+    };
+    let sel: TargetSelector = chip.clone().into();
     let reg = registry_with_custom();
     let mut session = attach_robust(info, sel, &reg)
-        .map_err(|e| format!("连接 {} 失败: {e}", cfg.chip))?;
+        .map_err(|e| format!("连接 {chip} 失败: {e}"))?;
 
     if cfg.flash {
         if cfg.elf.is_empty() {
@@ -350,7 +358,7 @@ pub fn attach(cfg: &LaunchArgs) -> Result<Target, String> {
     };
     Ok(Target {
         session: Some(session),
-        chip: cfg.chip.clone(),
+        chip,
         debug,
         bps: Vec::new(),
         rtt: None,

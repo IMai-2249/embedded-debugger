@@ -104,13 +104,11 @@
         ],
         "configurationAttributes": {
           "launch": {
-            "required": [
-              "chip"
-            ],
+            "required": [],
             "properties": {
               "chip": {
                 "type": "string",
-                "description": "芯片型号（如 STM32F767IGTx；需在内置库中或已导入厂商包）"
+                "description": "芯片型号（如 STM32F767IGTx）；留空则自动探测（当前支持 STM32 系列）"
               },
               "elf": {
                 "type": "string",
@@ -133,13 +131,11 @@
             }
           },
           "attach": {
-            "required": [
-              "chip"
-            ],
+            "required": [],
             "properties": {
               "chip": {
                 "type": "string",
-                "description": "芯片型号"
+                "description": "芯片型号；留空则自动探测（当前支持 STM32 系列）"
               },
               "elf": {
                 "type": "string",
